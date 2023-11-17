@@ -1,0 +1,482 @@
+---
+title: "Linear Regression Project (Sri)"
+author: "by Srinidhi (Sri) Manikantan"
+output: html_document
+warning: false
+---
+
+```{r echo=FALSE, message=FALSE, results=FALSE}
+install.packages("tidyverse", repos = "http://cran.us.r-project.org")
+library(tidyverse)
+
+install.packages("corrplot",repos = "http://cran.us.r-project.org")
+library(corrplot)
+
+install.packages("ggplot2",repos = "http://cran.us.r-project.org")
+library(ggplot2)
+```
+
+### 1) Loading and Viewing the Dataset
+
+We will start off with loading the dataset that was provided to us. We will be using the head() function to briefly look through the dataset and get a sensing of what we are dealing with. head() will show the first few rows of the dataset
+
+```{r}
+df_reg <- read.csv("flightDelay2.csv", stringsAsFactors=TRUE)
+
+head(df_reg)
+```
+
+### 2) Basic information about the dataset
+
+First, we will start off by finding the number of rows and columns of our dataset. From the output below, we can see that there are **34314 rows and 21 columns.**
+
+```{r}
+dim(df_reg)
+```
+
+```{r}
+str(df_reg)
+```
+
+```{r}
+summary(df_reg)
+```
+
+### 3) Cleaning/Processing the dataset
+
+rom our summary above, we can also see that certain columns are not informative and will not be meaningful for analysis. Let's analyze further and determine if these columns should be removed
+
+```{r}
+length(unique(df_reg$YEAR))
+length(unique(df_reg$MONTH))
+length(unique(df_reg$X))
+```
+
+Some variables like "YEAR", "MONTH" and "X" have no unique values, while variables like "DAY OF MONTH" is too granular to produce any meaningful insights. **Hence, we will be dropping these uninformative columns from our dataset.**
+
+**The columns dropped are: "YEAR", "MONTH", "DAY_OF_MONTH" and "X"**
+
+```{r}
+df = df_reg %>%
+  select(-YEAR, -MONTH, -DAY_OF_MONTH, -X)
+```
+
+First, we will be checking to see if our dataset has any missing data and remove any rows that have any.
+
+```{r}
+w <- complete.cases(df)
+df <- df[w,]
+
+dim(df)
+```
+
+```{r}
+dim(df_reg) - dim(df)
+```
+
+**This shows that 1007 rows and 4 columns have been removed from our data frame.**
+
+```{r}
+sapply(df, function(x) sum(is.na(x)))
+```
+
+This confirms that all our missing values have been removed successfully.
+
+```{r}
+str(df)
+```
+
+We also see that some variables like "CANCELLED", "DIVERTED", "CARRIER_DELAY", "WEATHER_DELAY" and "SECURITY_DELAY" have a lot of zeros in their columns. Let's analyze these variables.
+
+```{r}
+low_variance_cols <- names(df)[apply(df, 2, var) == 0]
+low_variance_cols
+```
+
+```{r}
+df <- df %>%
+  select(-CANCELLED, -DIVERTED)
+```
+
+**We have also dropped two low variance columns that will not be meaningful for our analysis: "CANCELLED" and "DIVERTED".**
+
+```{r}
+summary(df)
+```
+
+### 4) Understanding the correlations of our predictor and response variables
+
+```{r}
+correlation_matrix = cor(df)
+corrplot(correlation_matrix, diag = FALSE, method="number", type = 'lower', addCoef.col = 1,number.cex = 0.8, tl.cex = 0.5)
+```
+
+From the above correlation plot, you can see that there are 4 highly correlated variables with correlation around 0.96-0.98. I have summarized the 4 correlation pairs and a possible explanation below:
+
++-------------+---------------------+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| Predictor 1 | Predictor 2         | Possible Explanation                                                                                                                                                                                                                                                                         |
++=============+=====================+==============================================================================================================================================================================================================================================================================================+
+| WHEELS_OFF  | DEP_TIME            | WHEELS_OFF measures the time the flight took off which is essentially the same as DEP_TIME which measures the actual departure time.                                                                                                                                                         |
++-------------+---------------------+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| WHEELS_ON   | ARR_TIME            | WHEELS_ON measures the time the flight landed which is essentially the same as ARR_TIME which measures the actual arrival time.                                                                                                                                                              |
++-------------+---------------------+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| ARR_DELAY   | DEP_DELAY           | ARR_DELAY measure the delay in arrival, while DEP_DELAY measure the delay in departure. If there is a delay in departure, it is likely that it produces a similar delay in arrival time.\                                                                                                    |
+|             |                     | \                                                                                                                                                                                                                                                                                            |
+|             |                     | Also one key thing to note is that ARR_DELAY is our response variable, and we have identified one variable that is highly correlated with our response variable.                                                                                                                             |
++-------------+---------------------+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| DISTANCE    | ACTUAL_ELAPSED_TIME | DISTANCE measures the distance between the origin and destination, and ACTUAL_ELAPSED_TIME measure the time taken for the flight. It is likely that the time of the flight is highly correlated with the distance as the longer the distance, one would expect the time to also take longer. |
++-------------+---------------------+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+
+There are also 8 other pair of variables that are moderately correlated with correlation around 0.62 - 0.69.
+
+So there seems to be multicollinearity in the predictor variables. Out of the possible 104 pair combinations, about 10% (i.e. 12 pairs of variables) have moderate to high correlation with each other. One thing to note is also that all the pairs with correlation have positive correlation values (i.e. they are all positive correlated meaning the increase in one variable leads to an increase in the other variable).
+
+### 5) Identifying and removing outliers (if any)
+
+First, we will look at the distribution of our variables - which is an important key step before determining if values are outliers and hence have to be removed.
+
+```{r}
+df_numeric <- df %>%
+  select_if(is.numeric)
+```
+
+```{r}
+#understanding the distribution of our numeric variables
+df_numeric %>%
+  gather(key="Variables", value = "Value") %>%
+  ggplot(., aes(x=Value)) +
+  facet_wrap(~ Variables , ncol = 4, scales= "free") + 
+  geom_histogram(fill="deeppink", binwidth = 20) +
+  ggtitle("Histogram of Numerical Variables - to show distribution") +
+  theme(plot.title = element_text(hjust = 0.5)) + 
+  labs(x = "Values of Numerical Variables", y="Count")
+```
+
+```{r}
+df_numeric %>%
+  gather(key="Variables", value = "Value") %>%
+  ggplot(., aes(sample=Value)) +
+  facet_wrap(~ Variables, scales= "free") + 
+  stat_qq() +
+  labs(title = "QQ Plot for All Variables",
+       x = "Theoretical Quantiles",
+       y = "Sample Quantiles")
+```
+
+```{r}
+df_numeric %>%
+  select("DEP_TIME", "DEP_DELAY", "TAXI_OUT", "WHEELS_OFF", "WHEELS_ON", "TAXI_IN", "ARR_TIME", "ARR_DELAY") %>%
+  boxplot(., outline = TRUE, cex.axis = 0.5)
+
+```
+
+```{r}
+df %>%
+  select(-c("DEP_TIME", "DEP_DELAY", "TAXI_OUT", "WHEELS_OFF", "WHEELS_ON", "TAXI_IN", "ARR_TIME", "ARR_DELAY")) %>%
+  boxplot(., outline = TRUE, cex.axis = 0.4)
+```
+
+From the outliers, we can see that we do have a significant proportion of data that are identified as outliers for each variable. Let's use the box-plot method to actually count the number of outliers.
+
+```{r}
+outliers <- boxplot(df_numeric, plot = FALSE)$out
+num_outliers <- length(outliers)
+
+num_outliers
+```
+
+The boxplot method have identified 26690 outliers in our dataset. We will be cross checking this with another outlier identification method (i.e. using IQR) to check how many outliers there will be.
+
+```{r}
+df_numeric1 <- df_numeric  # Create a new dataframe as a copy of df_numeric
+
+for (col in names(df_numeric1)) {
+  if (sum(!is.na(df_numeric1[[col]])) > 0) {  # Check if there are non-NA values
+    Q1 <- quantile(df_numeric1[[col]], probs = 0.25, na.rm = TRUE)
+    Q3 <- quantile(df_numeric1[[col]], probs = 0.75, na.rm = TRUE)
+    IQR_value <- Q3 - Q1
+    lower_bound <- Q1 - 1.5 * IQR_value
+    upper_bound <- Q3 + 1.5 * IQR_value
+    
+    # Identify outliers and replace them with NA for the specific column in df_numeric1
+    df_numeric1[[col]][df_numeric1[[col]] < lower_bound | df_numeric1[[col]] > upper_bound] <- NA
+  }
+}
+
+# Print the cleaned data in df_numeric1
+head(df_numeric1)
+```
+
+```{r}
+w <- complete.cases(df_numeric1)
+df_numeric1 <- df_numeric1[w,]
+
+dim(df_numeric1)
+```
+
+```{r}
+dim(df_numeric) - dim(df_numeric1)
+```
+
+We tried two methods of identifying outliers - box-plot method and IQR method. Both approaches have identified a large proportion of dataset to be outliers (\~26000 for box-plot and \~10000 for IQR method). There is a possibility that these values are NOT outliers. Given the unpredictability of airplane travel and timing, it is possible that the range of these values just tend to be high and varied, causing these values to be identified as outliers.
+
+**As such, for the purpose of our analysis, we will not be removing any outliers from our dataset.**
+
+### 6) Splitting data into training and test sets
+
+```{r}
+set.seed(404)
+s <- sample(nrow(df),round(0.7*nrow(df)))
+
+df.train <- df[s,]
+df.test <- df[-s,]
+```
+
+### 7) Analysis with Linear Regression
+
+```{r}
+# Fit a linear regression model
+lm.out <- lm(ARR_DELAY~., data = df.train)
+arr.pred <- predict(lm.out,newdata=df.test)
+
+# Summarize the model
+summary(lm.out)
+```
+
+```{r}
+# Calculate residuals
+residuals <- df.test$ARR_DELAY - arr.pred
+
+# Calculate Mean Squared Error (MSE)
+mse <- mean(residuals^2)
+
+# Display the MSE
+cat("Mean Squared Error (MSE):", mse, "\n")
+```
+
+MSE represents the average squared difference between the actual observed values and the values predicted by the linear model. A MSE of 40.04 suggests that, on average, your model's predictions are off by the square root of 40.04, which is approximately 6.33. This means that the model's predictions deviate from the true values by about 6.33 units on average.
+
+```{r}
+hist(residuals)
+```
+
+From the output above, we can see that our residuals are normally distributed and roughly have a symmetric distribution (although slightly left skewed). This is a key assumption of linear regression, and our histogram plot proves that the assumption is met.
+
+We can also see that the histogram is centered around zero, which shows that our linear model is generally well-fitted and our model is good at making unbiased predictions.
+
+```{r}
+summary(lm.out)$adj.r.squared
+```
+
+The adjusted R-squared is 0.985, which is very close to 1. This means that a great proportion of the variance in our response variable can be explained by our predictor variables. Hence, we can conclude that the linear regression model is informative/useful and could be a good fit for our dataset.
+
+```{r}
+df.plot <- data.frame("x"=df.test$ARR_DELAY,"y"=arr.pred)
+ggplot(data = df.plot, aes(x = df.test$ARR_DELAY, y = arr.pred)) + geom_point() + geom_abline() +
+  xlab("Observed Response") +
+  ylab("Predicted Response")
+  
+```
+
+The linear model does not tend to break at all, and it shows how all the points nicely fall on/near the diagonal line.
+
+### 8) Computation of variance-inflation factors
+
+```{r}
+suppressMessages(library(car))
+lm.out <- lm(ARR_DELAY~.,data=df.train)
+vif_values <- vif(lm.out)
+vif_values
+```
+
+VIF is a measure that helps to assess multicollinearity. This happens when two or more predictor variables in a regression model are highly correlated with each other. High VIF values indicate that a variable is highly collinear with other predictors, which can lead to unstable coefficient estimates.
+
+A VIF of 1 indicates no multicollinearity, while a VIF greater than 1 suggests increasing levels of multicollinearity. Generally, a VIF value above 5 or 10 is often considered a sign of problematic multicollinearity.
+
+From our output above, we can see that there is a sign of problematic multicollinearity where more than one predictor variables have high VIF coefficients. Hence, we can see that more than 1 predictor variable is correlated with other predictors in a way that makes it difficult to disentangle their individual effects.
+
+We had previously identified some highly correlated variables in our correlation plot. We will remove one variable from each pair and run VIF again to see if the scores improve.
+
+```{r}
+df_new = df %>%
+  select(-c(WHEELS_OFF, WHEELS_ON, DEP_DELAY, ACTUAL_ELAPSED_TIME))
+
+df_new.train <- df_new[s,]
+df_new.test <- df_new[-s,]
+```
+
+```{r}
+lm.out <- lm(ARR_DELAY~.,data=df_new.train)
+vif_values <- vif(lm.out)
+vif_values
+```
+
+From the above output, we can see that all of our variables have the expected of VIF values around 1, showing that there is no issue of multicollinearity.
+
+### 9) Best-subset selection analysis of the dataset
+
+```{r}
+#removing the response variable from our dataset
+df_new1.train <- df_new.train %>%
+  select(-c("ARR_DELAY"))
+
+df_new1.test <- df_new.test %>%
+  select(-c("ARR_DELAY"))
+```
+
+```{r}
+#reinserting the y-variable in the last column as as "y" as that is the format bestglm expects the response variable to be
+y <- df_new.train$ARR_DELAY
+y <- df_new1.train <- data.frame(df_new1.train,"y"=y)
+
+y <- df_new.test$ARR_DELAY
+df_new1.test <- data.frame(df_new1.test,"y"=y)
+```
+
+```{r}
+suppressMessages(library(bestglm))
+out.bg.bic <- bestglm(df_new1.train,family=gaussian,IC="BIC")
+out.bg.bic$BestModel
+
+out.bg.aic <- bestglm(df_new1.train,family=gaussian,IC="AIC")
+out.bg.aic$BestModel
+
+```
+
+From the above output, we can see that BIC model retained 9 out of the 10 predictor variables, while AIC model retained all of the 10 predictor variables.
+
+Moreover, if we compare the coefficients of the common predictor variables between AIC and BIC, we can see that they are almost the same/or very similar showing that the model's performance, as indicated by both AIC and BIC, appears to be relatively consistent and stable with these predictors.
+
+A model with similar predictors and coefficients based on both AIC and BIC is less likely to suffer from overfitting as it avoids unnecessary complexity. This gives us more confidence in our selected model.
+
+```{r}
+aic.pred <- predict(out.bg.aic$BestModel,newdata=df_new1.test)
+mean((df_new1.test$y-aic.pred)^2)
+
+bic.pred <- predict(out.bg.bic$BestModel,newdata=df_new1.test)
+mean((df_new1.test$y-bic.pred)^2)
+```
+
+```{r}
+summary(out.bg.aic$BestModel)$adj.r.squared
+summary(out.bg.bic$BestModel)$adj.r.squared
+```
+
+However, when we do a comparison of the model performance with our initial model, we can see that the MSE is higher by 30 units and the adjusted R squared value also dropped slightly. This suggests there is a possibility that the dropped variables (i.e. the highly correlated variables contained valuable information for explaining the variation in the response variable). Multicollinearity could have been masking the individual effects of these variables, but they could still be contributing to the model's predictive power.
+
+As such, we may have to reconsider the dropped variables. We will try this again on the original df.train (i.e. without the dropping of correlated variables)
+
+```{r}
+df1.train <- df.train %>%
+  select(-c("ARR_DELAY"))
+
+df1.test <- df.test %>%
+  select(-c("ARR_DELAY"))
+```
+
+```{r}
+y <- df.train$ARR_DELAY
+y <- df1.train <- data.frame(df1.train,"y"=y)
+
+y <- df.test$ARR_DELAY
+df1.test <- data.frame(df1.test,"y"=y)
+```
+
+```{r}
+out.bg.bic <- bestglm(df1.train,family=gaussian,IC="BIC")
+out.bg.bic$BestModel
+
+out.bg.aic <- bestglm(df1.train,family=gaussian,IC="AIC")
+out.bg.aic$BestModel
+```
+
+From the output above, we can see how BIC also chose to retain 10 predictor variables, similar to what we saw above (although the choice of predictor variables are different). This shows that the multicollinearity plays a key role in determining which variables are important in predicting our response variable.
+
+```{r}
+aic.pred <- predict(out.bg.aic$BestModel,newdata=df1.test)
+mean((df1.test$y-aic.pred)^2)
+
+bic.pred <- predict(out.bg.bic$BestModel,newdata=df1.test)
+mean((df1.test$y-bic.pred)^2)
+```
+
+```{r}
+summary(out.bg.aic$BestModel)$adj.r.squared
+summary(out.bg.bic$BestModel)$adj.r.squared
+```
+
+Now, we can see that MSE have dropped slightly and the adjusted R-squared value has improved. This shows that our model's predictive accuracy is better. Hence, we can see that dropping correlated variables may not always be the ideal method when it comes to building the best model.
+
+### 10) Simple PCA Analysis on predictors
+
+```{r}
+df_noresp <- df %>%
+  select(-c("ARR_DELAY"))
+```
+
+```{r}
+pca.out <- prcomp(df_noresp,scale=TRUE)
+v <- summary(pca.out)$sdev^2
+cumulative_var = round(cumsum(v/sum(v)),3)
+cumulative_var
+```
+
+```{r}
+cumulative_data <- data.frame(
+  PC = 1:length(cumulative_var),  # Principal Component number
+  Cumulative_Variance = cumulative_var  # Cumulative Variance Explained
+)
+
+ggplot(cumulative_data, aes(x = PC, y = Cumulative_Variance)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  labs(title = "Cumulative Variance Explained by Principal Components",
+       x = "Principal Component",
+       y = "Cumulative Variance Explained")
+```
+
+From the output above, we can also see how 10 PE variables are able to explain almost 100% of the explained variance in the dataset (this is similar to what we observed for our best-subset selection analysis)
+
+```{r}
+round(pca.out$rotation[,1:9],3)
+```
+
+```{r}
+data <- data.frame(
+  PC1 = pca.out$x[,1],
+  PC2 = pca.out$x[,2])
+
+ggplot(data, aes(x=PC1, y=PC2, color=df$ARR_DELAY)) +
+  geom_point() +
+  scale_color_gradient(low = "blue", high = "red")
+```
+
+```{r}
+df_pca = data.frame(pca.out$x[, 1:10])
+pc.train <- df_pca[s, ]
+pc.test <- df_pca[-s, ]
+```
+
+```{r}
+lm.out <- lm(ARR_DELAY ~., data = cbind(pc.train, ARR_DELAY = df$ARR_DELAY[s]))
+arr.pred <- predict(lm.out,newdata = cbind(pc.test, ARR_DELAY = df$ARR_DELAY[-s]))
+```
+
+```{r}
+residuals <- df$ARR_DELAY[-s] - arr.pred
+
+# Calculate Mean Squared Error (MSE)
+mse <- mean(residuals^2)
+
+# Display the MSE
+cat("Mean Squared Error (MSE):", mse, "\n")
+```
+
+```{r}
+summary(lm.out)$adj.r.squared
+```
+
+The MSE is higher than what we had observed for our latest best-subset model analysis, and the adjusted R-squared value dropped slightly.
+
+In total comparison, it looks like our AIC model on the dataset (without dropping the correlated variables) performed the best - with a MSE score of 40.04303 (lowest we have seen) and adjusted-R squared value of 0.9851399 (highest we have seen).
+
+But we also need to take note that, although we are using MSE and adjusted-R squared value to compare between the different models, they all produce similar results. Hence, the choice of the best model depends on the specific context and objectives of your analysis.

@@ -1,0 +1,291 @@
+---
+title: "36600 - Project 1 EDA Assignment"
+author: "by Srinidhi (Sri) Manikantan"
+output: 
+  html_document:
+  warning: false
+---
+
+```{r echo=FALSE, message=FALSE, results=FALSE}
+install.packages("tidyverse", repos = "http://cran.us.r-project.org")
+library(tidyverse)
+
+install.packages("corrplot",repos = "http://cran.us.r-project.org")
+library(corrplot)
+
+install.packages("ggplot2",repos = "http://cran.us.r-project.org")
+library(ggplot2)
+```
+
+### 1) Loading and Viewing the Dataset
+
+We will start off with loading the dataset that was provided to us - "bird-diversity.csv". We will be using the head() function to briefly look through the dataset and get a sensing of what we are dealing with. head() will show the first few rows of the dataset
+
+```{r}
+df_eda <- read.csv("bird-diversity.csv", stringsAsFactors=TRUE, na.strings = '..')
+
+head(df_eda)
+```
+
+### 2) Basic information about the dataset
+
+First, we will start off by finding the number of rows and columns of our dataset. From the output below, we can see that there are **387 rows and 9 columns.**
+
+```{r}
+dim(df_eda)
+nrow(df_eda)
+ncol(df_eda)
+```
+
+Let's find out the names of our columns, so we have a better idea of what we are working with.
+
+```{r}
+colnames(df_eda)
+```
+
+Next, we will be using the summary() function to find out more details about the individual columns.
+
+For numerical variables, we will be able to understand the summary statistics of all the values in the columns. This includes the minimum value, first quartile, median, mean, 3rd quartile and maximum value. For categorical variables, we will be able to tell the count of each value in the column.
+
+```{r}
+summary(df_eda)
+```
+
+From our output above, we can easily see that there are **5 quantitative and 4 categorical variables.**
+
+The 5 quantitative variables are: 1) Allelic.richness, 2) Breeding.range.size, 3) Body.mass, 4)Latitude, 5) Heterozygosity (which is our response variable)
+
+And the other 4 categorical (i.e., factor) variables are: 1) Species , 2) Family , 3) Migratory.status and 4) References
+
+### 3) Cleaning/Processing the dataset
+
+From our summary above, we can also see that certain columns are not informative and will not be meaningful for analysis (specifically "References" and "Species"). **So, we will be dropping these uninformative columns from our dataset.**
+
+```{r}
+df_eda = df_eda %>%
+  select(-References, -Species)
+
+ncol(df_eda)
+colnames(df_eda)
+```
+
+We can see from the output above that our number of columns have dropped from 9 to 7 columns. This confirms that the 2 columns that we had specified above ("References" and "Species") have been dropped.
+
+Before any analysis, it is also important to check if there are any missing values. From our summary statistics above, we can note that there are no strange values like "99" or "9999" which can usually be found by checking the maximum values. These values could have been used as dummy values to encode any missing data like what we saw in our Lab Assignments.
+
+So now let's check the data to see if there are any data that has been encoded as "NA". From the output below, **we can confirm that there are zero missing values.**
+
+```{r}
+sapply(df_eda, function(x) sum(is.na(x)))
+```
+
+Next important step in data cleaning/processing is to check if there are any outliers and if we can remove them. Outliers can affect visualization and summarization, so it is important to deal with them before we begin our analysis.
+
+```{r}
+df.num = df_eda %>%
+  select(.,Heterozygosity,Allelic.richness,Breeding.range.size,Body.mass,Latitude)
+
+df.num %>%
+  gather(key="Variables", value = "Values") %>%
+  ggplot(., aes(x=Values)) +
+  facet_wrap(~ Variables , ncol = 2, scales= "free") + 
+  geom_boxplot(fill="steelblue") +
+  ggtitle("Boxplot of Numerical Variables - to show outliers") + 
+  theme(plot.title = element_text(hjust = 0.5))
+
+```
+
+From our boxplot graph above, we can see that four of our variables - Heterozygosity, Allelic.richness, Breeding.range.size and Body.mass - have a few values that do not fall within their interquartile range and could potentially be outliers.
+
+However, just by looking at the boxplot alone, it is difficult to determine how significant these outliers are in affecting our analysis. Hence, **we will be using the z-score method (a well-known method in identifying outliers) to count the number of outliers and remove them from our dataset.** For our EDA, we will be setting the threshold at 3, a commonly defined threshold for outliers.
+
+```{r}
+z_scoresar <- scale(df_eda$Allelic.richness)
+z_scoresbm <- scale(df_eda$Body.mass)
+z_scoresbr <- scale(df_eda$Breeding.range.size)
+z_scoreshz <- scale(df_eda$Heterozygosity)
+z_scoreslt <- scale(df_eda$Latitude)
+
+#to define a threshold for outlier
+threshold <- 3
+
+#to count the number of outliers for each variable
+num_outliers_ar <- sum(abs(z_scoresar) > threshold)
+num_outliers_bm <- sum(abs(z_scoresbm) > threshold)
+num_outliers_br <- sum(abs(z_scoresbr) > threshold)
+num_outliers_hz <- sum(abs(z_scoreshz) > threshold)
+num_outliers_lt <- sum(abs(z_scoreslt) > threshold)
+
+num_outliers_ar
+num_outliers_bm
+num_outliers_br
+num_outliers_hz
+num_outliers_lt
+```
+
+We have found the number of outliers that may significantly affect our analysis.
+
+Assuming that these outliers are independent of each other, we can see that they make up about 7% of the whole dataset (this is caluculated by taking the total number of outliers/total number of rows). Since this value is not very large, **we will be removing these outliers from our dataset.**
+
+```{r}
+df_cleaned <- df_eda %>%
+  filter(
+    abs(scale(Allelic.richness)) <= threshold,
+    abs(scale(Body.mass)) <= threshold,
+    abs(scale(Breeding.range.size)) <= threshold,
+    abs(scale(Heterozygosity)) <= threshold 
+    )
+
+head(df_cleaned)
+```
+
+```{r}
+dim(df_cleaned)
+```
+
+Moving forward, we will be using df_cleaned for our analysis.
+
+### 4) Understanding the distribution of our variables
+
+First, we will start off by understanding the distribution of our 5 numerical variables. We will be plotting faceted histograms for all the quantitative variables.
+
+```{r, message=FALSE}
+#to select the quantitative variables
+df.num2 = df_cleaned %>%
+  select(.,Heterozygosity,Allelic.richness,Breeding.range.size,Body.mass,Latitude)
+
+df.num2 %>%
+  gather(key="Variables", value = "Value") %>%
+  ggplot(., aes(x=Value)) +
+  facet_wrap(~ Variables , ncol = 3, scales= "free") + 
+  geom_histogram(fill="deeppink") +
+  ggtitle("Histogram of Numerical Variables - to show distribution") +
+  theme(plot.title = element_text(hjust = 0.5)) + 
+  labs(x = "Values of Numerical Variables", y="Count")
+```
+
+From the histogram plots, we can see that all our numerical predictor variables (except Heterozygosity) is **right-skewed** (also known as positively skewed). This means that most of the data falls to the right of the graph's peak.
+
+For our response variable (i.e.Heterozygosity), we can see that the distribution is more **left-skewed** (also known as negatively skewed). This means that most of the data falls to the left of the graph's peak.
+
+For Body Mass and Breeding Range Size, you can also see that majority of the values seem to appear at values 0 which may look like there is some error/missing values. However, when we take a quick scan of our dataset you will notice that there are no zeros for these variables. This distribution we see could probably be due to the large range of these variables. However, it is good to take note that the range is large and body mass and breeding range size are more common at the lowest values.
+
+Next, we will plot some faceted bar charts to understand the distribution of our 2 categorical variables.
+
+```{r}
+df_cleaned %>%
+  select(.,Family) %>%
+  gather(key="Variables", value = "Value") %>%
+  ggplot(., mapping=aes(x=Value), y=Variables) +
+  geom_bar(fill="orange") +
+  coord_flip() +
+  geom_text(stat = "count", aes(label = after_stat(count)), vjust = -0.5) +
+  theme_minimal() +
+  ggtitle("Bar Chart of Categorical Variables - to show distribution") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  labs(x = "Values in Categorical Variables", y="Count")
+```
+
+```{r}
+#to count the number of different values in the Family column
+length(unique(df_cleaned$Family))
+```
+
+```{r}
+Fam_counts <- table(df_cleaned$Family)
+Fam_counts
+```
+
+From the output above, we can see that there are 20 different values that appear in the Family column. And there is one key value, "Passeriformes", that appears significantly more times than the other values in the variable. By looking at the count, we can see that it appears 171 times which is around 6 times more than all the other values (i.e. 19 other values) in the Family column.
+
+Since there are 20 different values, it can be quite challenging to get any meaningful insights. **As such, we will be encoding this variable into two values instead. We will group them into those from the Passeriformes family and those who are not from the Passeriformes family.**
+
+```{r}
+condition <- c("Passeriformes") 
+
+df_cleaned <- df_cleaned %>%
+  mutate(Family_new = ifelse(Family %in% condition, "Yes", "No")) %>%
+  select(-Family)
+
+head(df_cleaned)
+```
+
+```{r}
+df_cleaned %>%
+  select(.,Family_new) %>%
+  gather(key="Variables", value = "Value") %>%
+  ggplot(., mapping=aes(x=Value), y=Variables) +
+  geom_bar(fill="orange") +
+  geom_text(stat = "count", aes(label = after_stat(count)), vjust = -0.5) +
+  labs(x = "Family (whether they belong to the Passeriformes)", y="Count") +
+  ggtitle("Bar Chart of Categorical Variables - to show distribution") +
+  theme(plot.title = element_text(hjust = 0.5))
+  
+  df_cleaned %>%
+  select(.,Migratory.status) %>%
+  gather(key="Variables", value = "Value") %>%
+  ggplot(., mapping=aes(x=Value), y=Variables) +
+  geom_bar(fill="orange") +
+  geom_text(stat = "count", aes(label = after_stat(count)), vjust = -0.5) +
+  labs(x = "Migratory Status", y="Count") +
+  ggtitle("Bar Chart of Categorical Variables - to show distribution") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+From the bar chart, we can see that the **majority of our dataset do not belong to the Passeriformes family**, although it is the most frequently reported family status. Nevertheless, it should be noted that almost half (\~47%) of them belong to the Passeriformes family.
+
+For the migratory status, we can see that the **majority of our dataset belong to the Resident status** (\~58%), while the rest of them belong to the Migratory status.
+
+### 5) Understanding the association of our variables with each other
+
+```{r}
+cor(df.num2) %>%
+  corrplot(.,method="number", type = 'lower', diag = FALSE)
+```
+
+From our correlation plot, we can see that the **highest correlation is between Allelic.richness and Heterozygosity**, with a correlation value of 0.68. Hence, we can conclude that both these variables have a moderate positive relationship - which means that as Allelic.richness gets larger, our response variable, Heterozygosity also tends to get larger. While the association may not be strong, there seems to be some level of association between these variables. But always remember that association does not mean causation!
+
+However, one thing to note is that only Allelic.richness seem to have an association with our response variable. It looks like there are **no other predictor variables that have an association with Heterozygosity.**
+
+We can also see that **all the other variables in our dataset have weak or no correlation with one another** (with correlation of less than abs(0.3)).
+
+### 6) Understanding the association of our predictor variables with our response variables
+
+```{r}
+df.num2 %>%
+  gather(key="Variables", value = "Value", -Heterozygosity) %>%
+  ggplot(., aes(x=Value, y=Heterozygosity)) +
+  geom_point (size = 0.5, colour="steelblue") +
+  facet_wrap(~ Variables , ncol = 2, scales= "free") + 
+  ggtitle("Scatterplot of relationship between numerical variables and y") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+As predicted above, we can see that only Allelic.richness has a positive association with our response variable. This can be seen through the increasing trend of the first scatterplot. The other 3 scatter plots seem to be randomly distributed, with no obvious trend/pattern to be observed. This **confirms our prediction above that there is no association between the other numerical variables and our response variable.**
+
+```{r}
+df_cleaned %>%
+  select(.,Family_new, Migratory.status, Heterozygosity) %>%
+  gather(key="Variables", value = "Value", -Heterozygosity) %>%
+  ggplot(., aes(x=Value, y= Heterozygosity)) +
+  geom_boxplot (fill="steelblue") +
+  facet_wrap(~ Variables , ncol = 2, scales= "free") + 
+  ggtitle("Boxplot of relationship between categorical variables and y") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+For our Family Variable, we can see that the **median for those that belong to the Passeriformes family is higher than those who do not belong to the Passeriformes family.** This could mean that heterozygosity level is higher for those that come from the Passeriformes family.
+
+For our Migratory Status, we can see that the **median for the resident and migratory groups are similar.** This could mean that migratory status have no effect on the heterozygosity level.
+
+### 7) Summary of Findings
+
+-   Majority of our dataset belong to the Resident status and do not belong to the Passeriformes family.
+
+-   Only 1 predictor variable (Allelic.richness) has a moderate association with our response variable.
+
+-   No other predictor variables that have an association with Heterozygosity or with each other.
+
+-   Heterozygosity level is higher for those that come from the Passeriformes family.
+
+-   Migratory status tend to have no effect on the heterozygosity level.
