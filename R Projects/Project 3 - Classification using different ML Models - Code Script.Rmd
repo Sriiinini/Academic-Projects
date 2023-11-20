@@ -1,0 +1,499 @@
+---
+title: "Classification Project (Sri)"
+author: "by Srinidhi (Sri) Manikantan"
+output: html_document
+warning: false
+---
+
+```{r echo=FALSE, message=FALSE, results=FALSE}
+library(tidyverse)
+library(ggplot2)
+library(rpart)
+library(rpart.plot)
+library(pROC)
+library(car)
+library(xgboost)
+library(randomForest)
+library(FNN)
+```
+
+### 1) Loading and Viewing the Dataset
+
+We will start off with loading the dataset that was provided to us. We will be using the head() function to briefly look through the dataset and get a sensing of what we are dealing with. head() will show the first few rows of the dataset
+
+```{r}
+df <- read.csv("kepler2.csv", stringsAsFactors=TRUE)
+head(df)
+```
+
+### 2) Basic information about the dataset
+
+First, we will start off by finding the number of rows and columns of our dataset. From the output below, we can see that there are **6859 rows and 16 columns.**
+
+```{r}
+dim(df)
+```
+
+Let's find out more details about the individual columns in the dataset (e.g. the **summary statistics, type of variables** etc. )
+
+```{r}
+str(df)
+```
+
+```{r}
+summary(df)
+```
+
+### 3) Cleaning/Processing the dataset
+
+First, we will be checking to see if our dataset has any missing data and remove any rows that have any.
+
+```{r}
+sapply(df, function(x) sum(is.na(x)))
+```
+
+```{r}
+w <- complete.cases(df)
+df1 <- df[w,]
+
+dim(df) - dim(df1)
+```
+
+```{r}
+low_variance_cols <- names(df)[apply(df, 2, var) == 0]
+low_variance_cols
+```
+
+This confirms that there are no missing values or low variance columns in our dataset.
+
+```{r}
+unique_counts <- sapply(df, function(column) length(unique(column)))
+print(unique_counts)
+```
+
+This also shows that all our columns have distinct values, and could possibly be meaningful for analysis. Hence, **we will NOT be dropping any predictor variables from our dataset.**
+
+### 3) Analysis distribution of predictor variables and identifying outliers (if any)
+
+```{r cars}
+df %>%
+  select(depth, dor, duration, impact, ror,srho,prad,incl) %>%
+  gather(key="Variables", value = "Value") %>%
+  ggplot(., aes(x=Value)) +
+  facet_wrap(~ Variables , ncol = 2, scales= "free") + 
+  geom_histogram(fill="deeppink") +
+  ggtitle("Histogram of Numerical Variables - to show distribution") +
+  theme(plot.title = element_text(hjust = 0.5)) + 
+  labs(x = "Values of Numerical Variables", y="Count")
+```
+
+```{r}
+df %>%
+  select(teq, dor, steff, slogg, smet, srad, smass) %>%
+  gather(key="Variables", value = "Value") %>%
+  ggplot(., aes(x=Value)) +
+  facet_wrap(~ Variables , ncol = 2, scales= "free") + 
+  geom_histogram(fill="deeppink") +
+  ggtitle("Histogram of Numerical Variables - to show distribution") +
+  theme(plot.title = element_text(hjust = 0.5)) + 
+  labs(x = "Values of Numerical Variables", y="Count")
+```
+
+```{r}
+df %>%
+  select(depth, dor, duration, impact, ror,srho,prad,incl) %>%
+  gather(key="Variables", value = "Value") %>%
+  ggplot(., aes(x=Value)) +
+  facet_wrap(~ Variables , ncol = 2, scales= "free") + 
+  geom_boxplot(fill="steelblue") +
+  ggtitle("Boxplot of Numerical Variables - to show outliers") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+```{r}
+df %>%
+  select(teq, dor, steff, slogg, smet, srad, smass) %>%
+  gather(key="Variables", value = "Value") %>%
+  ggplot(., aes(x=Value)) +
+  facet_wrap(~ Variables , ncol = 2, scales= "free") + 
+  geom_boxplot(fill="steelblue") +
+  ggtitle("Boxplot of Numerical Variables - to show outliers") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+From the above analysis, we can see that there could be some potential outliers in our dataset, especially for variables "depth", "prad" and "steff". We are going to use z-score to confirm if there are any significant outliers.
+
+When we set the threshold to 10, we can see that z-score did pick up 6 outliers from these 3 variables. **We will be removing these from our dataset, as they may significantly affect our analysis.**
+
+```{r}
+z_depth <- scale(df$depth)
+z_prad <- scale(df$prad)
+z_steff <- scale(df$steff)
+
+#to define a threshold for outlier
+threshold <- 10
+
+#to count the number of outliers for each variable
+num_outliers_depth <- sum(abs(z_depth) > threshold)
+num_outliers_prad <- sum(abs(z_prad) > threshold)
+num_outliers_steff <- sum(abs(z_steff) > threshold)
+
+num_outliers_depth
+num_outliers_prad
+num_outliers_steff
+```
+
+```{r}
+df <- df[order(-df$depth), ]
+head(df$depth)
+```
+
+```{r}
+df <- df[df$depth != 1541400, , drop = FALSE]
+```
+
+```{r}
+df <- df[order(-df$prad), ]
+head(df$prad)
+```
+
+```{r}
+df <- df[df$prad != 200346.0, , drop = FALSE]
+df <- df[df$prad != 161858.0, , drop = FALSE]
+df <- df[df$prad != 64333.8, , drop = FALSE]
+df <- df[df$prad != 46743.4, , drop = FALSE]
+```
+
+```{r}
+df <- df[order(-df$steff), ]
+head(df$steff)
+```
+
+```{r}
+df <- df[df$steff != 15896, , drop = FALSE]
+```
+
+```{r}
+dim(df)
+```
+
+From the above output, we can see that the 6 outliers have been removed from our dataset.
+
+### 4) Splitting the data into training and test sets for classification
+
+```{r}
+response   <- df[,16]
+predictors <- data.frame(scale(df[,-16]))
+```
+
+```{r}
+set.seed(404)
+s <- sample(nrow(predictors),0.7*nrow(predictors))
+pred.train = predictors[s,]
+pred.test = predictors[-s,]
+
+resp.train = response[s]
+resp.test = response[-s]
+```
+
+### 5) Analyzing with Logistic Regression Model
+
+```{r}
+out.log = glm(resp.train~.,family=binomial,data=pred.train)
+
+resp.prob = predict(out.log,newdata=pred.test,type="response") 
+resp.pred = ifelse(resp.prob>0.5,"FALSE POSITIVE", "CONFIRMED")
+
+MCR_log = mean(resp.pred!=resp.test) 
+CM_log = table(resp.pred,resp.test) 
+
+MCR_log
+CM_log
+```
+
+#### Determining the null classification rate (i.e. if we simply guess that all data belong to the majority class)
+
+```{r}
+prop_fail = sum(resp.test=="FALSE POSITIVE")/length(resp.test)
+
+1-prop_fail
+((1 - prop_fail - 0.12) / 0.12) * 100
+```
+
+The null MCR is much higher than the MCR rate that we got for our logistic regression model above. Our logistic regression does about 180% better than the null rate in terms of misclassification rate.
+
+```{r}
+roc.log = roc(resp.test,resp.prob)
+plot(roc.log,col="red",xlim=c(1,0),ylim=c(0,1))
+
+AUC_log = round(roc.log$auc,4)
+AUC_log
+```
+
+```{r echo=FALSE, message=FALSE, results=FALSE}
+optimal.threshold_log <- coords(roc.log, "best", ret = "threshold")
+optimal.threshold_log
+```
+
+```{r}
+out.log = glm(resp.train~.,family=binomial,data=pred.train)
+
+resp.prob.log = predict(out.log,newdata=pred.test,type="response") 
+resp.pred = ifelse(resp.prob>0.6494639,"FALSE POSITIVE", "CONFIRMED")
+
+MCR_log1 = mean(resp.pred!=resp.test) 
+CM_log1 = table(resp.pred,resp.test) 
+
+MCR_log1
+CM_log1
+```
+
+```{r}
+roc.log = roc(resp.test,resp.prob.log)
+plot(roc.log,col="red",xlim=c(1,0),ylim=c(0,1))
+
+AUC1_log = round(roc.log$auc,4)
+AUC1_log
+```
+
+### 6) Analyzing with Regression Tree Model
+
+```{r}
+rpart.out <- rpart(resp.train~. , data = pred.train, method = "class")
+resp.pred = predict(rpart.out, newdata = pred.test, type="class")
+
+MCR_tree = mean(resp.pred!=resp.test) 
+CM_tree = table(resp.pred,resp.test) 
+
+MCR_tree
+CM_tree
+```
+
+```{r}
+resp.pred.tree <- predict(rpart.out,newdata=pred.test,type="prob")[,2]
+(roc.tree = roc(resp.test,resp.pred.tree))
+plot(roc.tree,col="red",xlim=c(1,0),ylim=c(0,1))
+
+AUC_tree = round(roc.tree$auc,4)
+AUC_tree
+```
+
+```{r}
+plotcp(rpart.out)
+```
+
+From the output above, we can see that the leftmost point that lies below the dotted line is the last point farthest to the right, therefore pruning is not necessary in this case.
+
+### 7) Analyzing with Random Forest Model
+
+```{r}
+set.seed(404)
+rf.out = randomForest(resp.train~.,data=pred.train,importance=TRUE)
+out.pred = predict(rf.out,newdata=pred.test,type="prob")[,2]
+resp.pred = factor(ifelse(out.pred>0.5,"FALSE POSITIVE","CONFIRMED"),levels=c("FALSE POSITIVE","CONFIRMED"))
+
+MCR_forest = mean(resp.pred!=resp.test)
+CM_forest = table(resp.pred,resp.test)
+
+MCR_forest
+CM_forest
+```
+
+```{r}
+roc.forest = roc(resp.test,out.pred)
+plot(roc.forest,col="red",xlim=c(1,0),ylim=c(0,1))
+
+AUC_forest = round(roc.forest$auc,4)
+AUC_forest
+```
+
+```{r}
+optimal_threshold.forest <- coords(roc.forest, "best")$threshold
+optimal_threshold.forest
+```
+
+```{r}
+set.seed(404)
+rf.out = randomForest(resp.train~.,data=pred.train,importance=TRUE)
+out.pred = predict(rf.out,newdata=pred.test,type="prob")[,2]
+resp.pred = factor(ifelse(out.pred>0.662,"FALSE POSITIVE","CONFIRMED"),levels=c("FALSE POSITIVE","CONFIRMED"))
+
+MCR1_forest = mean(resp.pred!=resp.test)
+CM1_forest = table(resp.pred,resp.test)
+
+MCR1_forest
+CM1_forest
+```
+
+```{r}
+roc.forest = roc(resp.test,out.pred)
+plot(roc.forest,col="red",xlim=c(1,0),ylim=c(0,1))
+
+AUC1_forest = round(roc.forest$auc,4)
+AUC1_forest
+```
+
+### 8) Analyzing with XGBoost Model
+
+```{r}
+resp.train_numeric <- as.numeric(as.factor(resp.train)) - 1
+resp.test_numeric <- as.numeric(as.factor(resp.test)) - 1
+
+train = xgb.DMatrix(data=as.matrix(pred.train),label=resp.train_numeric)
+test = xgb.DMatrix(data=as.matrix(pred.test),label=resp.test_numeric)
+
+set.seed(101)
+xgb.cv.out = xgb.cv(params=list(objective="binary:logistic", eval_metric="error"),data=train,nrounds=30,nfold=5,verbose=0)
+
+cat("The optimal number of trees is ",which.min(xgb.cv.out$evaluation_log$test_error_mean),"\n")
+```
+
+```{r}
+xgb.out = xgboost(train,nrounds=20,params=list(objective="binary:logistic"), eval_metric="error", verbose = 0)
+
+pred_probs <- predict(xgb.out, newdata=test)
+pred_classes <- ifelse(pred_probs > 0.5, "FALSE POSITIVE", "CONFIRMED")
+
+MCR_xgboost = round(mean(pred_classes != resp.test),4)
+CM_xgboost = table(pred_classes,resp.test)
+  
+MCR_xgboost 
+CM_xgboost
+```
+
+```{r}
+roc.xgboost = roc(resp.test,pred_probs)
+plot(roc.xgboost,col="red",xlim=c(1,0),ylim=c(0,1))
+
+AUC_xgboost = round(roc.log$auc,4)
+AUC_xgboost
+```
+
+```{r}
+optimal_threshold.xgboost <- coords(roc.xgboost, "best")$threshold
+optimal_threshold.xgboost
+```
+
+```{r}
+xgb.out = xgboost(train,nrounds=20,params=list(objective="binary:logistic"), eval_metric="error", verbose = 0)
+
+pred_probs1 <- predict(xgb.out, newdata=test)
+pred_classes1 <- ifelse(pred_probs > 0.6919135, "FALSE POSITIVE", "CONFIRMED")
+
+MCR1_xgboost = round(mean(pred_classes1 != resp.test),4)
+CM1_xgboost = table(pred_classes1,resp.test)
+  
+MCR1_xgboost 
+CM1_xgboost
+```
+
+```{r}
+roc.xgboost1 = roc(resp.test,pred_probs1)
+plot(roc.xgboost1,col="red",xlim=c(1,0),ylim=c(0,1))
+
+AUC1_xgboost = round(roc.log$auc,4)
+AUC1_xgboost
+```
+
+### 9) Analyzing with K-Nearest Neighbours (kNN)
+
+```{r}
+k.max = 30
+mcr.k = rep(NA, k.max)
+
+for (kk in 1:k.max) {
+  knn.out = knn.cv(train = pred.train, cl = resp.train, k = kk, algorithm = "brute", prob = TRUE)  
+  mcr.k[kk] = mean(knn.out != resp.train)
+}
+
+k.min = which.min(mcr.k)
+cat("The optimal number of nearest neighbors is ", k.min, "\n")
+```
+
+```{r}
+knn.out = knn(train = pred.train, test = pred.test, cl = resp.train, k = 9, algorithm = "brute", prob = TRUE)  
+MCR_knn = mean(knn.out != resp.test)
+CM_knn = table(knn.out, resp.test)
+
+MCR_knn
+CM_knn
+```
+
+```{r}
+knn.prob = attributes(knn.out)$prob
+w = which(knn.out=="CONFIRMED")
+knn.prob[w] = 1 - knn.prob[w] 
+```
+
+```{r}
+roc.knn=roc(resp.test, knn.prob)
+plot(roc.knn,col="red",xlim=c(1,0),ylim=c(0,1))
+
+AUC_knn = round(roc.knn$auc,4)
+AUC_knn
+```
+
+### 10) Summary and Choosing the Best Model
+
+#### - Summarizing the performance of different models using metrics such as Misclassification Rate (MCR) and Area Under Curve (AUC)
+
+The lower the MCR value and the higher the AUC value for the model, the better its performance is in classifying the exoplanets int he dataset.
+
+```{r}
+model_names <- c("Logistic Regression", "Regression Tree", "Random Forest", "XgBoost", "kNN")
+mcr_values <- c(MCR_log1, MCR_tree, MCR1_forest, MCR1_xgboost, MCR_knn)
+auc_values <- c(AUC1_log, AUC_tree, AUC1_forest, AUC1_xgboost, AUC_knn)
+
+# Create a data frame
+summary_table <- data.frame(ModelType = model_names, MCR = mcr_values, AUC = auc_values)
+
+# Print the table
+print(summary_table)
+```
+
+```{r}
+lowest_mcr_row <- summary_table[which.min(round(summary_table$MCR,4)), ]
+highest_auc_row <- summary_table[which.max(round(summary_table$AUC,4)), ]
+
+print(lowest_mcr_row)
+print(highest_auc_row)
+```
+
+From the above output, we can see that our Random Forest Model (using the Youden\'s J optimal probability threshold) has the lowest MCR value and highest AUC value. XgBoost has the next lowest MCR value and the next highest AUC value - which is not too far off the values that we observed for our Random Forest Model.
+
+#### - Overlaying all the ROC curves on one plot
+
+```{r}
+roc_curve1 <- roc(resp.test_numeric, resp.prob.log)
+roc_curve2 <- roc(resp.test_numeric, resp.pred.tree)
+roc_curve3 <- roc(resp.test_numeric, out.pred)
+roc_curve4 <- roc(resp.test_numeric, pred_probs1)
+roc_curve5 <- roc(resp.test_numeric, knn.prob)
+
+# Plot multiple ROC curves
+plot.roc(roc_curve1, col = "red", main = "ROC Curves", col.main = "blue")
+plot.roc(roc_curve2, col = "green", add = TRUE)
+plot.roc(roc_curve3, col = "purple", add = TRUE)
+plot.roc(roc_curve4, col = "orange", add = TRUE)
+plot.roc(roc_curve5, col = "brown", add = TRUE)
+
+legend("bottomright", legend = c("Logistic", "Tree", "Random Forest", "XgBoost", "kNN"), col = c("red", "green", "purple", "orange", "brown"), lty = 1)
+
+```
+
+From the plot above, we can see that our Random Forest Model and XgBoost are the highest - and in fact are almost overlapping in the plot.
+
+### 11) Conclusion
+
+In conclusion, we can see that Random Forest is the best model in classifying exoplanets as confirmed or false positive. The XgBoost Model is a close second, and is not too far off, in comparison to the Random Forest Model.
+
+The choice between the two models depends on the characteristics of your data and the problem we are aiming to address. In this case, I would choose the Random Forest Model as it is simpler model and is less prone to over-fitting. Although XGBoost is known to deliver better predictive accuracy, since Random Forest is able to achieve the same MCR and AUC as XGBoost for our dataset, Random Forest might be a better choice for our analysis.
+
+```{r}
+cat("The optimal thereshold used for our best model (i.e. Random Forest) is ", optimal_threshold.forest, "\n")
+
+cat("The misclassification rate for our best model (i.e. Random Forest) is ", MCR1_forest, "\n")
+
+cat("The confusion matrix produced for our best model (i.e. Random Forest) is ", "\n")
+CM1_forest
+```
